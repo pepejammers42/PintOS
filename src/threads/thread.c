@@ -142,6 +142,7 @@ void thread_tick(int64_t tick) {
       t->wake_time = 0;
       thread_unblock(t);
     }
+    itr = list_next(itr);
   }
   /* ----------------------------------------------------------------------- */
   /* Enforce preemption. */
