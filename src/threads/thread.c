@@ -74,6 +74,8 @@ static void *alloc_frame(struct thread *, size_t size);
 static void schedule(void);
 void thread_schedule_tail(struct thread *prev);
 static tid_t allocate_tid(void);
+static bool compare_prio(const struct list_elem *a, const struct list_elem *b,
+                         void *aux UNUSED);
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -208,6 +210,12 @@ tid_t thread_create(const char *name, int priority, thread_func *function,
   /* Add to run queue. */
   thread_unblock(t);
 
+  /* ---------------------------------------------------------------------
+   * do the thing with the priority if it is higher than current           */
+  if (priority > thread_current()->priority) {
+    thread_yield();
+  }
+  /* --------------------------------------------------------------------- */
   return tid;
 }
 
@@ -252,7 +260,11 @@ void thread_unblock(struct thread *t) {
 
   old_level = intr_disable();
   ASSERT(t->status == THREAD_BLOCKED);
+  /* OLD
   list_push_back(&ready_list, &t->elem);
+   */
+
+  list_insert_ordered(&ready_list, &t->elem, compare_prio, NULL);
   t->status = THREAD_READY;
   intr_set_level(old_level);
 }
@@ -312,8 +324,14 @@ void thread_yield(void) {
   ASSERT(!intr_context());
 
   old_level = intr_disable();
-  if (cur != idle_thread)
+  if (cur != idle_thread) {
+
+    /* OLD
     list_push_back(&ready_list, &cur->elem);
+     */
+
+    list_insert_ordered(&ready_list, &cur->elem, compare_prio, NULL);
+  }
   cur->status = THREAD_READY;
   schedule();
   intr_set_level(old_level);
@@ -363,6 +381,17 @@ int thread_get_recent_cpu(void) {
   /* Not yet implemented. */
   return 0;
 }
+
+/* ----------------------------------------------------------------------- *
+ *  list_less_func to insertion into queue/list in this case.              */
+
+static bool compare_prio(const struct list_elem *a, const struct list_elem *b,
+                         void *aux UNUSED) {
+  struct thread *ta = list_entry(a, struct thread, elem);
+  struct thread *tb = list_entry(b, struct thread, elem);
+  return ta->priority > tb->priority;
+}
+/* ----------------------------------------------------------------------- */
 
 /* Idle thread.  Executes when no other thread is ready to run.
 
