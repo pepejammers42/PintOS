@@ -175,9 +175,51 @@ void lock_acquire(struct lock *lock) {
   ASSERT(!intr_context());
   ASSERT(!lock_held_by_current_thread(lock));
 
+  /* ----------------------------------------------------------------------- */
+  lock_recurse(lock);
+  /* ----------------------------------------------------------------------- */
+
   sema_down(&lock->semaphore);
   lock->holder = thread_current();
+  /* ----------------------------------------------------------------------- */
+  // Now lock is gotten, update the rest values.
+  lock->holder->lock_waiton = NULL;
+  /* ----------------------------------------------------------------------- */
 }
+
+/* -----------------------------------------------------------------------
+ * donation process if needed                                              */
+void lock_recurse(struct lock *lock) {
+  struct thread *cur_thread = thread_current();
+  struct lock *cur_lock = lock;
+  struct thread *cur_holder = lock->holder;
+  int itr_count = 0;
+
+  // it could wait so we first update the waiting lock
+  cur_thread->lock_waiton = lock;
+
+  // if the lock is not held by anyone, then put that lock onto curr
+  if (!cur_holder)
+    cur_lock->max_priority = cur_thread->priority;
+
+  while (cur_holder && itr_count <= 8 &&
+         cur_holder->priority < cur_thread->priority) {
+    /* so then if the current thread, whos trying to acquire the lock, need to
+     * boost priority of the holder.
+     */
+    thread_donate_priority(cur_holder, cur_thread->priority);
+
+    if (cur_lock->max_priority < cur_thread->priority)
+      cur_lock->max_priority = cur_thread->priority;
+
+    cur_lock = cur_holder->lock_waiton;
+    if (!cur_lock)
+      break;
+    cur_holder = cur_lock->holder;
+    itr_count++;
+  }
+}
+/* ----------------------------------------------------------------------- */
 
 /* Tries to acquires LOCK and returns true if successful or false
    on failure.  The lock must not already be held by the current

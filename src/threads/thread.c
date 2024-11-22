@@ -305,6 +305,11 @@ void thread_exit(void) {
   process_exit();
 #endif
 
+  /* ----------------------------------------------------------------------- */
+  // TODO: release locks?
+
+  /* ----------------------------------------------------------------------- */
+
   /* Remove thread from all threads list, set our status to dying,
      and schedule another process.  That process will destroy us
      when it calls thread_schedule_tail(). */
@@ -352,8 +357,40 @@ void thread_foreach(thread_action_func *func, void *aux) {
 
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void thread_set_priority(int new_priority) {
-  thread_current()->priority = new_priority;
+  /* ----------------------------------------------------------------------- */
+  struct thread *cur = thread_current();
+
+  if (cur->priority == cur->init_priority) {
+    cur->priority = new_priority;
+    cur->init_priority = new_priority;
+  } else {
+    cur->init_priority = new_priority;
+  }
+
+  if (!list_empty(&ready_list)) {
+    struct thread *head =
+        list_entry(list_begin(&ready_list), struct thread, elem);
+    if (head != NULL && head->priority > new_priority)
+      thread_yield();
+  }
+
+  /* ----------------------------------------------------------------------- */
 }
+
+/* ----------------------------------------------------------------------- */
+void thread_donate_priority(struct thread *to, int priority) {
+  to->priority = priority;
+
+  if (!list_empty(&ready_list) && thread_current() == to) {
+    /* current one would have highest priority, but after donation,
+    it could have lower, so we check for that yield */
+    struct thread *head =
+        list_entry(list_begin(&ready_list), struct thread, elem);
+    if (head != NULL && head->priority > priority)
+      thread_yield();
+  }
+}
+/* ----------------------------------------------------------------------- */
 
 /* Returns the current thread's priority. */
 int thread_get_priority(void) {
@@ -468,6 +505,12 @@ static void init_thread(struct thread *t, const char *name, int priority) {
   strlcpy(t->name, name, sizeof t->name);
   t->stack = (uint8_t *)t + PGSIZE;
   t->priority = priority;
+  // added field, keep track of the pre-donated priority.
+  t->init_priority = priority;
+  // added field, keep track of the lock that it is waiting on.
+  t->lock_waiton = NULL;
+  // added field, keep track of the donors.
+  list_init(&t->locks_held);
   t->magic = THREAD_MAGIC;
 
   old_level = intr_disable();

@@ -94,6 +94,11 @@ struct thread {
   /* Additions to thread struct -------------------------------------------- */
   struct list_elem waitelem;
   int64_t wake_time;
+  int init_priority;
+  // in a sense this keeps track of nested donations
+  // A -> L1 (B) then B (L1) -> L2 (C).
+  struct lock *lock_waiton;
+  struct list locks_held;
   /* ----------------------------------------------------------------------- */
 
 #ifdef USERPROG
@@ -136,6 +141,7 @@ void thread_foreach(thread_action_func *, void *);
 
 int thread_get_priority(void);
 void thread_set_priority(int);
+void thread_donate_priority(struct thread *t, int priority);
 
 int thread_get_nice(void);
 void thread_set_nice(int);
