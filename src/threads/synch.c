@@ -29,8 +29,12 @@
 #include "threads/synch.h"
 #include <stdio.h>
 #include <string.h>
+#include "list.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
+
+static bool compare_prio(const struct list_elem *a, const struct list_elem *b,
+                         void *aux UNUSED);
 
 /* Initializes semaphore SEMA to VALUE.  A semaphore is a
    nonnegative integer along with two atomic operators for
@@ -184,6 +188,8 @@ void lock_acquire(struct lock *lock) {
   /* ----------------------------------------------------------------------- */
   // Now lock is gotten, update the rest values.
   lock->holder->lock_waiton = NULL;
+  list_insert_ordered(&lock->holder->locks_held, &lock->in_thread, compare_prio,
+                      NULL);
   /* ----------------------------------------------------------------------- */
 }
 
@@ -250,6 +256,20 @@ void lock_release(struct lock *lock) {
 
   lock->holder = NULL;
   sema_up(&lock->semaphore);
+
+  /* ----------------------------------------------------------------------- */
+  list_remove(&lock->in_thread);
+
+  // then run the next highest priority, if there exist inside the locks held
+  struct thread *cur = thread_current();
+  if (!list_empty(&cur->locks_held)) {
+    struct lock *next_lock =
+        list_entry(list_front(&cur->locks_held), struct lock, in_thread);
+    thread_donate_priority(cur, next_lock->max_priority);
+  } else {
+    thread_donate_priority(cur, cur->init_priority);
+  }
+  /* ----------------------------------------------------------------------- */
 }
 
 /* Returns true if the current thread holds LOCK, false
@@ -343,3 +363,14 @@ void cond_broadcast(struct condition *cond, struct lock *lock) {
   while (!list_empty(&cond->waiters))
     cond_signal(cond, lock);
 }
+
+/* ----------------------------------------------------------------------- *
+ *  list_less_func to insertion into queue/list in this case.              */
+
+static bool compare_prio(const struct list_elem *a, const struct list_elem *b,
+                         void *aux UNUSED) {
+  struct thread *ta = list_entry(a, struct thread, elem);
+  struct thread *tb = list_entry(b, struct thread, elem);
+  return ta->priority > tb->priority;
+}
+/* ----------------------------------------------------------------------- */
