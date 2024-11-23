@@ -143,6 +143,11 @@ int thread_get_priority(void);
 void thread_set_priority(int);
 void thread_donate_priority(struct thread *t, int priority);
 
+bool compare_prio_thread(const struct list_elem *a, const struct list_elem *b,
+                         void *aux UNUSED);
+bool compare_prio_lock(const struct list_elem *a, const struct list_elem *b,
+                       void *aux UNUSED);
+
 int thread_get_nice(void);
 void thread_set_nice(int);
 int thread_get_recent_cpu(void);

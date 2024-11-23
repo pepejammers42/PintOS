@@ -74,8 +74,6 @@ static void *alloc_frame(struct thread *, size_t size);
 static void schedule(void);
 void thread_schedule_tail(struct thread *prev);
 static tid_t allocate_tid(void);
-static bool compare_prio(const struct list_elem *a, const struct list_elem *b,
-                         void *aux UNUSED);
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -264,8 +262,12 @@ void thread_unblock(struct thread *t) {
   list_push_back(&ready_list, &t->elem);
    */
 
-  list_insert_ordered(&ready_list, &t->elem, compare_prio, NULL);
   t->status = THREAD_READY;
+
+  list_insert_ordered(&ready_list, &t->elem, compare_prio_thread, NULL);
+  if (thread_current() != idle_thread &&
+      thread_current()->priority < t->priority)
+    thread_yield();
   intr_set_level(old_level);
 }
 
@@ -335,7 +337,7 @@ void thread_yield(void) {
     list_push_back(&ready_list, &cur->elem);
      */
 
-    list_insert_ordered(&ready_list, &cur->elem, compare_prio, NULL);
+    list_insert_ordered(&ready_list, &cur->elem, compare_prio_thread, NULL);
   }
   cur->status = THREAD_READY;
   schedule();
@@ -398,7 +400,8 @@ int thread_get_priority(void) {
 }
 
 /* Sets the current thread's nice value to NICE. */
-void thread_set_nice(int nice UNUSED) { /* Not yet implemented. */ }
+void thread_set_nice(int nice UNUSED) { /* Not yet implemented. */
+}
 
 /* Returns the current thread's nice value. */
 int thread_get_nice(void) {
@@ -421,11 +424,18 @@ int thread_get_recent_cpu(void) {
 /* ----------------------------------------------------------------------- *
  *  list_less_func to insertion into queue/list in this case.              */
 
-static bool compare_prio(const struct list_elem *a, const struct list_elem *b,
+bool compare_prio_thread(const struct list_elem *a, const struct list_elem *b,
                          void *aux UNUSED) {
   struct thread *ta = list_entry(a, struct thread, elem);
   struct thread *tb = list_entry(b, struct thread, elem);
   return ta->priority > tb->priority;
+}
+
+bool compare_prio_lock(const struct list_elem *a, const struct list_elem *b,
+                       void *aux UNUSED) {
+  struct lock *la = list_entry(a, struct lock, in_thread);
+  struct lock *lb = list_entry(b, struct lock, in_thread);
+  return la->max_priority > lb->max_priority;
 }
 /* ----------------------------------------------------------------------- */
 
