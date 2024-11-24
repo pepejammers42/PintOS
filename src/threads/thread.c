@@ -31,6 +31,9 @@ static struct list all_list;
 
 /* A list of processes that is currently waiting ------------------------- */
 static struct list wait_list;
+
+// mlfqs
+fixed_t load_avg;
 /* ----------------------------------------------------------------------- */
 
 /* Idle thread. */
@@ -266,8 +269,13 @@ void thread_unblock(struct thread *t) {
 
   list_insert_ordered(&ready_list, &t->elem, compare_prio_thread, NULL);
   if (thread_current() != idle_thread &&
-      thread_current()->priority < t->priority)
-    thread_yield();
+      thread_current()->priority < t->priority) {
+    if (intr_context()) {
+      intr_yield_on_return();
+    } else {
+      thread_yield();
+    }
+  }
   intr_set_level(old_level);
 }
 
@@ -309,7 +317,6 @@ void thread_exit(void) {
 
   /* ----------------------------------------------------------------------- */
   // TODO: release locks?
-
   /* ----------------------------------------------------------------------- */
 
   /* Remove thread from all threads list, set our status to dying,
@@ -360,6 +367,8 @@ void thread_foreach(thread_action_func *func, void *aux) {
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void thread_set_priority(int new_priority) {
   /* ----------------------------------------------------------------------- */
+  if (thread_mlfqs)
+    return;
   struct thread *cur = thread_current();
 
   if (cur->priority == cur->init_priority) {
@@ -400,25 +409,39 @@ int thread_get_priority(void) {
 }
 
 /* Sets the current thread's nice value to NICE. */
-void thread_set_nice(int nice UNUSED) { /* Not yet implemented. */
+void thread_set_nice(int nice) {
+  /* --------------------------------------------------------------------- */
+  thread_current()->nice = nice;
+  // now yield, if it doesn't have the highest priority.
+  thread_recalculate_priority(thread_current());
+  if (!list_empty(&ready_list)) {
+    struct thread *head =
+        list_entry(list_begin(&ready_list), struct thread, elem);
+    if (head != NULL && head->priority > thread_current()->priority)
+      thread_yield();
+  }
+  /* --------------------------------------------------------------------- */
 }
 
 /* Returns the current thread's nice value. */
 int thread_get_nice(void) {
-  /* Not yet implemented. */
-  return 0;
+  /* --------------------------------------------------------------------- */
+  return thread_current()->nice;
+  /* --------------------------------------------------------------------- */
 }
 
 /* Returns 100 times the system load average. */
 int thread_get_load_avg(void) {
-  /* Not yet implemented. */
-  return 0;
+  /* --------------------------------------------------------------------- */
+  return CONV_NEAR(MULT_INT(load_avg, 100));
+  /* --------------------------------------------------------------------- */
 }
 
 /* Returns 100 times the current thread's recent_cpu value. */
 int thread_get_recent_cpu(void) {
-  /* Not yet implemented. */
-  return 0;
+  /* --------------------------------------------------------------------- */
+  return CONV_NEAR(MULT_INT(thread_current()->recent_cpu, 100));
+  /* --------------------------------------------------------------------- */
 }
 
 /* ----------------------------------------------------------------------- *
@@ -436,6 +459,67 @@ bool compare_prio_lock(const struct list_elem *a, const struct list_elem *b,
   struct lock *la = list_entry(a, struct lock, in_thread);
   struct lock *lb = list_entry(b, struct lock, in_thread);
   return la->max_priority > lb->max_priority;
+}
+/* ----------------------------------------------------------------------- */
+
+/* ----------------------------------------------------------------------- */
+/* mlfqs
+ * recent_cpu measures the amount of CPU time a thread has received "recently."
+ * On each timer tick, the running thread's recent_cpu is incremented by 1. Once
+ * per second, every thread's recent_cpu is updated this way:
+ *      recent_cpu = (2*load_avg)/(2*load_avg + 1) * recent_cpu + nice.
+ * load_avg estimates the average number of threads ready to run over the past
+ * minute. It is initialized to 0 at boot and recalculated once per second as
+ * follows:
+ *      load_avg = (59/60)*load_avg + (1/60)*ready_threads.
+ *
+ * where ready_threads is the number of threads that are either running or ready
+ * to run at time of update (not including the idle thread). */
+
+void thread_update_load_avg(void) {
+  int thread_count = list_size(&ready_list);
+
+  if (thread_current() != idle_thread)
+    thread_count++;
+  load_avg =
+      ADD(DIV_INT(MULT_INT(load_avg, 59), 60), DIV_INT(CONV(thread_count), 60));
+
+  struct thread *cur;
+  struct list_elem *itr = list_begin(&all_list);
+  while (itr != list_end(&all_list)) {
+    cur = list_entry(itr, struct thread, allelem);
+    if (cur != idle_thread) {
+      cur->recent_cpu = ADD_INT(
+          MULT(DIV(MULT_INT(load_avg, 2), ADD_INT(MULT_INT(load_avg, 2), 1)),
+               cur->recent_cpu),
+          cur->nice);
+    }
+    itr = list_next(itr);
+  }
+}
+
+void thread_increment_recent_cpu(void) {
+  struct thread *cur = thread_current();
+  if (cur != idle_thread)
+    cur->recent_cpu = ADD_INT(cur->recent_cpu, 1);
+}
+
+/*
+ * Thread priority is calculated initially at thread initialization. It is also
+ * recalculated once every fourth clock tick, for every thread. In either case,
+ * it is determined by the formula
+ *          priority = PRI_MAX - (recent_cpu / 4) - (nice * 2),
+ *
+ * The calculated priority is always adjusted to lie in
+ * the valid range PRI_MIN to PRI_MAX. */
+void thread_recalculate_priority(struct thread *t) {
+  if (t == idle_thread)
+    return;
+
+  t->priority = CONV_NEAR(
+      SUB_INT(SUB(CONV(PRI_MAX), DIV_INT(t->recent_cpu, 4)), 2 * t->nice));
+  t->priority = t->priority < PRI_MIN ? PRI_MIN : t->priority;
+  t->priority = t->priority > PRI_MAX ? PRI_MAX : t->priority;
 }
 /* ----------------------------------------------------------------------- */
 
@@ -520,8 +604,10 @@ static void init_thread(struct thread *t, const char *name, int priority) {
   t->lock_waiton = NULL;
   // added field, keep track of the donors.
   list_init(&t->locks_held);
+  // mlfqs
+  t->nice = 0;
+  t->recent_cpu = CONV(0);
   t->magic = THREAD_MAGIC;
-
   old_level = intr_disable();
   list_push_back(&all_list, &t->allelem);
   intr_set_level(old_level);

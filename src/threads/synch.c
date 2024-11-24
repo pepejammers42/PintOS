@@ -189,17 +189,21 @@ void lock_acquire(struct lock *lock) {
   ASSERT(!lock_held_by_current_thread(lock));
 
   /* ----------------------------------------------------------------------- */
-  lock_recurse(lock);
+  // remember to check if it is mlfqs bc we don't need to donate
+  if (!thread_mlfqs)
+    lock_recurse(lock);
   /* ----------------------------------------------------------------------- */
 
   sema_down(&lock->semaphore);
   lock->holder = thread_current();
   /* ----------------------------------------------------------------------- */
   // Now lock is gotten, update the rest values.
-  lock->holder->lock_waiton = NULL;
+  if (!thread_mlfqs) {
+    lock->holder->lock_waiton = NULL;
 
-  list_insert_ordered(&lock->holder->locks_held, &lock->in_thread,
-                      compare_prio_lock, NULL);
+    list_insert_ordered(&lock->holder->locks_held, &lock->in_thread,
+                        compare_prio_lock, NULL);
+  }
   /* ----------------------------------------------------------------------- */
 }
 
@@ -268,19 +272,22 @@ void lock_release(struct lock *lock) {
   sema_up(&lock->semaphore);
 
   /* ----------------------------------------------------------------------- */
-  list_remove(&lock->in_thread);
+  // check mlfqs again
+  if (!thread_mlfqs) {
+    list_remove(&lock->in_thread);
 
-  // then run the next highest priority, if there exist inside the locks held
-  struct thread *cur = thread_current();
-  if (!list_empty(&cur->locks_held)) {
-    // NOTE: this took forever to figure out, but need to sort as order can
-    // change.
-    list_sort(&cur->locks_held, compare_prio_lock, NULL);
-    struct lock *next_lock =
-        list_entry(list_front(&cur->locks_held), struct lock, in_thread);
-    thread_donate_priority(cur, next_lock->max_priority);
-  } else {
-    thread_donate_priority(cur, cur->init_priority);
+    // then run the next highest priority, if there exist inside the locks held
+    struct thread *cur = thread_current();
+    if (!list_empty(&cur->locks_held)) {
+      // NOTE: this took forever to figure out, but need to sort as order can
+      // change.
+      list_sort(&cur->locks_held, compare_prio_lock, NULL);
+      struct lock *next_lock =
+          list_entry(list_front(&cur->locks_held), struct lock, in_thread);
+      thread_donate_priority(cur, next_lock->max_priority);
+    } else {
+      thread_donate_priority(cur, cur->init_priority);
+    }
   }
   /* ----------------------------------------------------------------------- */
 }
