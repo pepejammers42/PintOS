@@ -211,8 +211,8 @@ tid_t thread_create(const char *name, int priority, thread_func *function,
   struct thread *cur = thread_current();
   enum intr_level old_level;
   if (thread_mlfqs) {
-    t->nice = cur->nice;
     old_level = intr_disable();
+    t->nice = cur->nice;
     t->recent_cpu = cur->recent_cpu;
     t->priority = cur->priority;
     intr_set_level(old_level);
@@ -502,6 +502,7 @@ void thread_update_load_avg(void) {
           MULT(DIV(MULT_INT(load_avg, 2), ADD_INT(MULT_INT(load_avg, 2), 1)),
                cur->recent_cpu),
           cur->nice);
+      thread_recalculate_priority(cur);
     }
     itr = list_next(itr);
   }
