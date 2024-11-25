@@ -208,6 +208,15 @@ tid_t thread_create(const char *name, int priority, thread_func *function,
   sf->eip = switch_entry;
   sf->ebp = 0;
 
+  struct thread *cur = thread_current();
+  enum intr_level old_level;
+  if (thread_mlfqs) {
+    t->nice = cur->nice;
+    old_level = intr_disable();
+    t->recent_cpu = cur->recent_cpu;
+    t->priority = cur->priority;
+    intr_set_level(old_level);
+  }
   /* Add to run queue. */
   thread_unblock(t);
 
